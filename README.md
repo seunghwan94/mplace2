@@ -12,3 +12,7 @@ mplace/
 ├─ server.js
 ├─ .env
 └─ package.json
+
+```
+mysql -u root -p < ./db/init.sql
+```
