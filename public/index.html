@@ -1,264 +1,473 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>m/place</title>
-    <script src="/socket.io/socket.io.js"></script>
-    <style>
-      body {
-          font-family: sans-serif;
-          background-color: #1e1e1e;
-          color: #d4d4d4;
-          margin: 0;
-          padding: 0;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          min-height: 100vh;
-          overflow: hidden;
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes" />
+  <title>m/place - 실시간 픽셀 협업 캔버스</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e, #16213e);
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    /* Header */
+    .header {
+      background: rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(10px);
+      padding: 1rem;
+      text-align: center;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    
+    .header h1 {
+      font-size: 1.8rem;
+      background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 0.5rem;
+    }
+    
+    .header .subtitle {
+      font-size: 0.9rem;
+      opacity: 0.7;
+    }
+    
+    /* Main Content */
+    .main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 1rem;
+      gap: 1rem;
+    }
+    
+    /* Control Panel */
+    .control-panel {
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 15px;
+      padding: 1.5rem;
+      width: 100%;
+      max-width: 500px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    
+    .user-info {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+    
+    .input-group {
+      flex: 1;
+      min-width: 200px;
+    }
+    
+    .input-group label {
+      display: block;
+      font-size: 0.9rem;
+      margin-bottom: 0.5rem;
+      opacity: 0.8;
+    }
+    
+    .input-group input {
+      width: 100%;
+      padding: 0.8rem;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      font-size: 1rem;
+    }
+    
+    .input-group input::placeholder {
+      color: rgba(255, 255, 255, 0.5);
+    }
+    
+    .color-input {
+      height: 50px !important;
+      border-radius: 8px !important;
+      cursor: pointer;
+    }
+    
+    /* Status Bar */
+    .status-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.9rem;
+    }
+    
+    .status-item i {
+      color: #4ecdc4;
+    }
+    
+    .online-count {
+      background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
+      padding: 0.3rem 0.8rem;
+      border-radius: 20px;
+      font-weight: bold;
+    }
+    
+    /* Canvas Container */
+  .canvas-container {
+    position: relative;
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+    width: 100%;         /* 화면 너비 100% */
+    max-width: 800px;    /* 데스크탑에서 최대 크기 제한(Optional) */
+    margin: 0 auto;      /* 가운데 정렬 */
+  }
+    
+  #pixelCanvas {
+    display: block;
+    width: 100%;         /* 내부 1000px을 화면 너비에 맞춰 늘림 */
+    height: auto;        /* 종횡비 유지 */
+    cursor: crosshair;
+    transform-origin: top left; /* transform scale 시 좌상단 기준*/
+  }
+    
+    /* Canvas Controls */
+    .canvas-controls {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      z-index: 10;
+    }
+    
+    .control-btn {
+      width: 40px;
+      height: 40px;
+      border: none;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+      transition: all 0.3s ease;
+    }
+    
+    .control-btn:hover {
+      background: rgba(0, 0, 0, 0.9);
+      transform: scale(1.1);
+    }
+    
+    /* Cooldown Message */
+    .cooldown-msg {
+      text-align: center;
+      font-size: 0.9rem;
+      min-height: 20px;
+      color: #ff6b6b;
+      font-weight: bold;
+    }
+    
+    /* Ad Space */
+    .ad-space {
+      width: 100%;
+      max-width: 500px;
+      height: 100px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 2px dashed rgba(255, 255, 255, 0.2);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 0.9rem;
+      margin: 1rem 0;
+    }
+    
+    /* Footer */
+    .footer {
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(10px);
+      padding: 2rem 1rem;
+      text-align: center;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      margin-top: auto;
+    }
+    
+    .footer-content {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    
+    .footer-links {
+      display: flex;
+      justify-content: center;
+      gap: 2rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+    
+    .footer-link {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: #4ecdc4;
+      text-decoration: none;
+      font-size: 0.9rem;
+      transition: color 0.3s ease;
+    }
+    
+    .footer-link:hover {
+      color: #ff6b6b;
+    }
+    
+    .footer-copyright {
+      font-size: 0.8rem;
+      opacity: 0.6;
+      margin-top: 1rem;
+    }
+    
+    /* Mobile Optimizations */
+    @media (max-width: 768px) {
+      .header h1 {
+        font-size: 1.5rem;
       }
-
-      #nicknameModal {
-          position: fixed;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          background-color: rgba(0,0,0,0.8);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          z-index: 1000;
+      
+      .control-panel {
+        padding: 1rem;
       }
-
-      .modal-content {
-          background-color: #2a2a2a;
-          padding: 30px;
-          border-radius: 8px;
-          text-align: center;
-          box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+      
+      .user-info {
+        flex-direction: column;
+        gap: 0.8rem;
       }
-      .modal-content h2 { margin-top: 0;}
-      .modal-content input {
-          padding: 10px;
-          margin: 10px 0;
-          border-radius: 4px;
-          border: 1px solid #555;
-          background-color: #333;
-          color: #fff;
-          width: calc(100% - 22px);
+      
+      .input-group {
+        min-width: unset;
       }
-      .modal-content button {
-          padding: 10px 20px;
-          border-radius: 4px;
-          border: none;
-          background-color: #007bff;
-          color: white;
-          cursor: pointer;
-          transition: background-color 0.2s;
+      
+      .status-bar {
+        flex-direction: column;
+        gap: 0.5rem;
+        text-align: center;
       }
-      .modal-content button:hover { background-color: #0056b3; }
-
-      #appContainer {
-          display: flex;
-          width: 100%;
-          height: 100vh;
-          max-width: 100vw;
-          max-height: 100vh;
+      
+      .canvas-container {
+        width: 100%;
+        max-height: 60vh;
       }
-
-      #canvasArea {
-          flex-grow: 1;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          overflow: auto;
-          background-color: #333;
-          position: relative;
+      
+      .canvas-controls {
+        position: fixed;
+        bottom: 100px;
+        right: 10px;
+        z-index: 1000;
       }
-
+      
+      .footer-links {
+        flex-direction: column;
+        gap: 1rem;
+      }
+    }
+    
+    @media (max-width: 480px) {
+      .main-content {
+        padding: 0.5rem;
+      }
+      
+      .control-panel {
+        margin: 0 0.5rem;
+        width: calc(100% - 1rem);
+      }
+      
+      .canvas-container {
+        margin: 0 0.5rem;
+        width: calc(100% - 1rem);
+      }
+    }
+    
+    /* Touch-friendly improvements */
+    @media (hover: none) and (pointer: coarse) {
+      .control-btn {
+        width: 50px;
+        height: 50px;
+      }
+      
       #pixelCanvas {
-          border: 1px solid #555;
-          cursor: crosshair;
-          image-rendering: pixelated;
-          background-color: white;
-          transform-origin: top left;
+        cursor: pointer;
       }
-
-      #controlsArea {
-          width: 280px;
-          min-width: 250px;
-          padding: 20px;
-          background-color: #252526;
-          border-left: 1px solid #444;
-          box-sizing: border-box;
-          overflow-y: auto;
-          display: flex;
-          flex-direction: column;
-          gap: 15px;
-      }
-
-      .userInfo p, .colorPalette h3, .zoomControls, .activityFeed h4 {
-          margin-bottom: 10px;
-      }
-      .userInfo strong, #userCount { color: #4CAF50; }
-
-      .colorPalette {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(30px, 1fr));
-          gap: 5px;
-          margin-bottom: 15px;
-      }
-      .colorPalette h3 { grid-column: 1 / -1; margin-bottom: 5px;}
-
-      .color-button {
-          width: 30px;
-          height: 30px;
-          border: 1px solid #555;
-          cursor: pointer;
-          border-radius: 4px;
-          transition: transform 0.1s;
-      }
-      .color-button:hover {
-          transform: scale(1.1);
-          border-color: #ccc;
-      }
-      .color-button.selected {
-          border: 2px solid #007bff;
-          box-shadow: 0 0 5px #007bff;
-      }
-
-      #customColorPicker {
-          width: 100%;
-          height: 30px;
-          border: 1px solid #555;
-          padding: 0;
-          margin-top: 5px;
-          grid-column: 1 / -1;
-      }
-      #selectCustomColor {
-          grid-column: 1 / -1;
-          padding: 8px;
-          margin-top: 5px;
-          background-color: #555;
-          color: white;
-          border: none;
-          border-radius: 4px;
-          cursor: pointer;
-      }
-      #selectCustomColor:hover { background-color: #666; }
-
-      .zoomControls button {
-          padding: 8px 12px;
-          margin-right: 5px;
-          background-color: #555;
-          color: white;
-          border: none;
-          border-radius: 4px;
-          cursor: pointer;
-      }
-      .zoomControls button:hover { background-color: #666; }
-
-      .activityFeed {
-          background-color: #1c1c1c;
-          padding: 10px;
-          border-radius: 4px;
-          flex-grow: 1;
-          overflow-y: auto;
-          max-height: 200px;
-      }
-      .activityFeed h4 { margin-top: 0; }
-      #feedList {
-          list-style-type: none;
-          padding: 0;
-          margin: 0;
-          font-size: 0.9em;
-      }
-      #feedList li {
-          padding: 3px 0;
-          border-bottom: 1px solid #333;
-      }
-      #feedList li:last-child { border-bottom: none; }
-      #feedList .nickname { font-weight: bold; }
-      #feedList .action-placed { color: #9CDCFE; }
-      #feedList .pixel-color-chip {
-          display: inline-block;
-          width: 10px;
-          height: 10px;
-          border: 1px solid #555;
-          margin-right: 5px;
-          vertical-align: middle;
-      }
-
-      .error-message {
-          color: #ff4d4d;
-          font-size: 0.9em;
-          margin-top: 5px;
-      }
-
-      #cooldownTimer {
-          color: #FFD700;
-      }
-      canvas {
-        border: 1px solid #444;
-        image-rendering: pixelated;
-        touch-action: none;
-        background: #000;
-      }
-
-    </style>
+    }
+      /* 2) 모바일 전용 간격·패딩 조정(Optional) */
+  @media (max-width: 480px) {
+    .canvas-container {
+      max-width: 100%;   /* 모바일에서 화면 폭에 꽉 차도록 */
+    }
+  }
+    /* Loading animation */
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    .loading {
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+  </style>
 </head>
 <body>
-    <div id="nicknameModal">
-        <div class="modal-content">
-            <h2>Enter your Nickname</h2>
-            <input type="text" id="nicknameInput" maxlength="50" placeholder="Nickname (max 50 chars)">
-            <button id="joinButton">Join Canvas</button>
-            <p id="joinError" class="error-message"></p>
+  <!-- Header -->
+  <header class="header">
+    <h1><i class="fas fa-palette"></i> m/place</h1>
+    <div class="subtitle">실시간 픽셀 협업 캔버스 - www.mplace.site</div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="main-content">
+    <!-- Control Panel -->
+    <div class="control-panel">
+      <div class="user-info">
+        <div class="input-group">
+          <label for="nicknameInput"><i class="fas fa-user"></i> 닉네임</label>
+          <input type="text" id="nicknameInput" maxlength="12" placeholder="3~12자 입력" />
         </div>
+        <div class="input-group">
+          <label for="colorPicker"><i class="fas fa-paint-brush"></i> 색상</label>
+          <input type="color" id="colorPicker" value="#ff0000" class="color-input" />
+        </div>
+      </div>
+      
+      <div class="status-bar">
+        <div class="status-item">
+          <i class="fas fa-users"></i>
+          <span>접속자: <span class="online-count" id="onlineCount">0</span></span>
+        </div>
+        <div class="status-item">
+          <i class="fas fa-clock"></i>
+          <span>쿨다운: 3초</span>
+        </div>
+        <div class="status-item">
+          <i class="fas fa-th"></i>
+          <span>100×100 캔버스</span>
+        </div>
+      </div>
     </div>
 
-    <div id="appContainer" style="display:none;">
-        <div id="canvasArea">
-            <canvas id="pixelCanvas"></canvas>
-        </div>
-        <div id="controlsArea">
-            <div class="userInfo">
-                <p>Playing as: <strong id="userNicknameDisplay"></strong></p>
-                <p>Users Online: <span id="userCount">0</span></p>
-                <p id="cooldownTimer">Cooldown: Ready</p>
-                <p id="actionError" class="error-message"></p>
-            </div>
-            <div class="colorPalette">
-                <h3>Color Palette</h3>
-                <div class="color-button" style="background-color: #FF0000;" data-color="#FF0000"></div>
-                <div class="color-button" style="background-color: #00FF00;" data-color="#00FF00"></div>
-                <div class="color-button" style="background-color: #0000FF;" data-color="#0000FF"></div>
-                <div class="color-button" style="background-color: #FFFF00;" data-color="#FFFF00"></div>
-                <div class="color-button" style="background-color: #FF00FF;" data-color="#FF00FF"></div>
-                <div class="color-button" style="background-color: #00FFFF;" data-color="#00FFFF"></div>
-                <div class="color-button" style="background-color: #000000;" data-color="#000000"></div>
-                <div class="color-button" style="background-color: #FFFFFF;" data-color="#FFFFFF" title="Eraser (White)"></div>
-                <div class="color-button" style="background-color: #808080;" data-color="#808080"></div>
-                <div class="color-button" style="background-color: #FFA500;" data-color="#FFA500"></div>
-                <div class="color-button" style="background-color: #A020F0;" data-color="#A020F0"></div>
-                <div class="color-button" style="background-color: #FFC0CB;" data-color="#FFC0CB"></div>
-                <input type="color" id="customColorPicker" value="#CCCCCC">
-                <button id="selectCustomColor">Use Custom</button>
-            </div>
-            <div class="zoomControls">
-                <button id="zoomIn">+</button>
-                <button id="zoomOut">-</button>
-                <button id="zoomReset">Reset Zoom</button>
-            </div>
-            <div class="activityFeed">
-                <h4>Activity Feed (Last Placed):</h4>
-                <ul id="feedList"></ul>
-            </div>
-        </div>
+    <!-- Cooldown Message -->
+    <div class="cooldown-msg" id="cooldownMsg"></div>
+
+    <!-- Canvas Container -->
+    <div class="canvas-container">
+      <canvas id="pixelCanvas" width="1000" height="1000"></canvas>
+      
+      <!-- Canvas Controls -->
+      <div class="canvas-controls">
+        <button class="control-btn" id="zoomIn" title="확대">
+          <i class="fas fa-plus"></i>
+        </button>
+        <button class="control-btn" id="zoomOut" title="축소">
+          <i class="fas fa-minus"></i>
+        </button>
+        <button class="control-btn" id="zoomReset" title="원래 크기">
+          <i class="fas fa-home"></i>
+        </button>
+      </div>
     </div>
-    <script src="client.js"></script>
+
+    <!-- Ad Space -->
+    <div class="ad-space">
+      <i class="fas fa-ad"></i> 광고 영역 (준비중)
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-content">
+      <div class="footer-links">
+        <a href="tel:010-9105-9999" class="footer-link">
+          <i class="fas fa-phone"></i>
+          <span>010-9105-9999</span>
+        </a>
+        <a href="#" class="footer-link">
+          <i class="fas fa-code"></i>
+          <span>Dev: magolee</span>
+        </a>
+        <a href="https://www.mplace.site" class="footer-link">
+          <i class="fas fa-globe"></i>
+          <span>www.mplace.site</span>
+        </a>
+      </div>
+      <div class="footer-copyright">
+        © 2025 m/place. 실시간 픽셀 협업 프로젝트 - 기간 한정 이벤트
+      </div>
+    </div>
+  </footer>
+
+  <!-- Socket.IO 클라이언트 -->
+  <script src="/socket.io/socket.io.js"></script>
+  <!-- 실제 로직은 client.js에 작성 -->
+  <script src="client.js"></script>
+  
+  <script>
+    // 기본 UI 상호작용
+    document.addEventListener('DOMContentLoaded', function() {
+      // 줌 컨트롤 기본 이벤트 (client.js에서 실제 구현)
+      document.getElementById('zoomIn').addEventListener('click', function() {
+        console.log('Zoom In');
+      });
+      
+      document.getElementById('zoomOut').addEventListener('click', function() {
+        console.log('Zoom Out');
+      });
+      
+      document.getElementById('zoomReset').addEventListener('click', function() {
+        console.log('Zoom Reset');
+      });
+      
+      // 닉네임 로컬 스토리지 저장/불러오기
+      const nicknameInput = document.getElementById('nicknameInput');
+      const savedNickname = localStorage.getItem('mplace_nickname');
+      if (savedNickname) {
+        nicknameInput.value = savedNickname;
+      }
+      
+      nicknameInput.addEventListener('change', function() {
+        localStorage.setItem('mplace_nickname', this.value);
+      });
+      
+      // 터치 디바이스 감지 및 최적화
+      if ('ontouchstart' in window) {
+        document.body.classList.add('touch-device');
+      }
+    });
+  </script>
 </body>
 </html>
