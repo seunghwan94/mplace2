@@ -1,213 +1,366 @@
-// public/client.js
+// client.js
 
 document.addEventListener('DOMContentLoaded', () => {
-  const socket = io();
+    const socket = io();
 
-  // 내부 캔버스 해상도 (HTML <canvas width="1000" height="1000"> 와 동일)
-  const INTERNAL_SIZE = 1000;
+    // Modal elements
+    const nicknameModal = document.getElementById('nicknameModal');
+    const nicknameInput = document.getElementById('nicknameInput');
+    const joinButton = document.getElementById('joinButton');
+    const joinErrorP = document.getElementById('joinError');
+    const appContainer = document.getElementById('appContainer');
 
-  // DOM 요소 캐싱
-  const canvas = document.getElementById('pixelCanvas');
-  const ctx = canvas.getContext('2d');
-  const nicknameInput = document.getElementById('nicknameInput');
-  const colorPicker = document.getElementById('colorPicker');
-  const cooldownMsg = document.getElementById('cooldownMsg');
-  const onlineCountSpan = document.getElementById('onlineCount');
+    // Canvas elements
+    const canvas = document.getElementById('pixelCanvas');
+    const ctx = canvas.getContext('2d');
 
-  const zoomInBtn = document.getElementById('zoomIn');
-  const zoomOutBtn = document.getElementById('zoomOut');
-  const zoomResetBtn = document.getElementById('zoomReset');
+    // Control/display elements
+    const userNicknameDisplay = document.getElementById('userNicknameDisplay');
+    const userCountSpan = document.getElementById('userCount');
+    const cooldownTimerP = document.getElementById('cooldownTimer');
+    const actionErrorP = document.getElementById('actionError');
 
-  // 로컬 쿨다운 상태
-  let lastClickTime = 0;
-  const COOLDOWN_MS = 3000;
-  let cooldownIntervalId = null;
+    const colorPaletteDiv = document.querySelector('.colorPalette');
+    const customColorPicker = document.getElementById('customColorPicker');
+    const selectCustomColorButton = document.getElementById('selectCustomColor');
 
-  // 현재 줌 레벨 (1.0 = 기본, >1.0 = 확대, <1.0 = 축소)
-  let zoomLevel = 1.0;
-  const ZOOM_STEP = 0.2;  // 한 번 누를 때마다 20%씩 증감
-  const ZOOM_MIN = 0.5;
-  const ZOOM_MAX = 3.0;
+    const zoomInButton = document.getElementById('zoomIn');
+    const zoomOutButton = document.getElementById('zoomOut');
+    const zoomResetButton = document.getElementById('zoomReset');
 
-  // ────────────────────────────────────────────────────────────────
-  // 1) 닉네임 관리 (localStorage ↔ 서버 join)
-  // ────────────────────────────────────────────────────────────────
-  const savedNick = localStorage.getItem('mplace_nickname');
-  if (savedNick) {
-    nicknameInput.value = savedNick;
-    socket.emit('join', savedNick);
-  }
+    const feedListUl = document.getElementById('feedList');
+    const MAX_FEED_ITEMS = 10;
 
-  nicknameInput.addEventListener('change', () => {
-    const nick = nicknameInput.value.trim();
-    if (nick.length >= 3 && nick.length <= 12) {
-      localStorage.setItem('mplace_nickname', nick);
-      socket.emit('join', nick);
+    // Canvas settings - defaults, overridden by server
+    let CANVAS_WIDTH = 1000;
+    let CANVAS_HEIGHT = 1000;
+    const PIXEL_SIZE = 10;
+    const GRID_INTERVAL = 10;
+    const GRID_LINE_COLOR = '#CCCCCC';
+
+    // User/session state
+    let currentNickname = localStorage.getItem('mplaceNickname');
+    let selectedColor = '#000000';
+    let currentZoom = 1;
+    const MIN_ZOOM = 0.5;
+    const MAX_ZOOM = 30;
+    const ZOOM_STEP = 1.2;
+
+    // Panning state
+    let isPanning = false;
+    let lastPanPosition = { x: 0, y: 0 };
+    let viewOffset = { x: 0, y: 0 };
+
+    // Sparse client-side canvas cache
+    let clientCanvasState = {};
+
+    // Disable image smoothing
+    ctx.imageSmoothingEnabled = false;
+
+    // Restore nickname if saved
+    if (currentNickname) {
+        nicknameInput.value = currentNickname;
     }
-  });
 
-  // ────────────────────────────────────────────────────────────────
-  // 2) 캔버스 초기화: 배경 + 격자 그리기
-  // ────────────────────────────────────────────────────────────────
-  function drawGrid() {
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, INTERNAL_SIZE, INTERNAL_SIZE);
-
-    ctx.strokeStyle = '#cccccc';
-    ctx.lineWidth = 0.5;
-    for (let x = 0; x <= INTERNAL_SIZE; x += 10) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, INTERNAL_SIZE);
-      ctx.stroke();
-    }
-    for (let y = 0; y <= INTERNAL_SIZE; y += 10) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(INTERNAL_SIZE, y);
-      ctx.stroke();
-    }
-  }
-  drawGrid();
-
-  // ────────────────────────────────────────────────────────────────
-  // 3) 초기 픽셀 상태 불러와서 그리기
-  // ────────────────────────────────────────────────────────────────
-  fetch('/api/pixels')
-    .then(res => res.json())
-    .then(pixels => {
-      pixels.forEach(({ x, y, color }) => {
-        drawPixel(x, y, color);
-      });
-    })
-    .catch(err => {
-      console.error('초기 픽셀 로드 오류:', err);
+    // Join logic
+    joinButton.addEventListener('click', () => {
+        const nickname = nicknameInput.value.trim();
+        if (nickname && nickname.length <= 50) {
+            currentNickname = nickname;
+            localStorage.setItem('mplaceNickname', nickname);
+            userNicknameDisplay.textContent = nickname;
+            joinErrorP.textContent = '';
+            socket.emit('requestInitialState', nickname);
+        } else {
+            joinErrorP.textContent = 'Nickname must be 1-50 characters.';
+        }
     });
 
-  // ────────────────────────────────────────────────────────────────
-  // 4) 픽셀 그리기 함수
-  // ────────────────────────────────────────────────────────────────
-  function drawPixel(x, y, color) {
-    ctx.fillStyle = color;
-    // 10×10 셀 안쪽 8×8 영역을 채워서 격자선과 겹치지 않도록 함
-    ctx.fillRect(x * 10 + 1, y * 10 + 1, 8, 8);
-  }
+    socket.on('joinError', (message) => {
+        joinErrorP.textContent = message;
+        nicknameModal.style.display = 'flex';
+        appContainer.style.display = 'none';
+    });
 
-  // ────────────────────────────────────────────────────────────────
-  // 5) 로컬 쿨다운 처리
-  // ────────────────────────────────────────────────────────────────
-  function canClick() {
-    return Date.now() - lastClickTime >= COOLDOWN_MS;
-  }
+    // Initial canvas state
+    socket.on('initialCanvas', (data) => {
+        const { pixels, width, height } = data;
+        CANVAS_WIDTH = width;
+        CANVAS_HEIGHT = height;
+        clientCanvasState = pixels;
 
-  function startLocalCooldown() {
-    let remaining = COOLDOWN_MS;
-    cooldownMsg.textContent = `${Math.ceil(remaining / 1000)}초`;
+        nicknameModal.style.display = 'none';
+        appContainer.style.display = 'flex';
 
-    cooldownIntervalId = setInterval(() => {
-      remaining -= 1000;
-      if (remaining > 0) {
-        cooldownMsg.textContent = `${Math.ceil(remaining / 1000)}초`;
-      } else {
-        clearInterval(cooldownIntervalId);
-        cooldownIntervalId = null;
-        cooldownMsg.textContent = '';
-      }
-    }, 1000);
-  }
+        // Reset zoom & pan
+        currentZoom = 2;
+        viewOffset = { x: 0, y: 0 };
+        redrawFullCanvas();
+    });
 
-  // ────────────────────────────────────────────────────────────────
-  // 6) 캔버스 클릭 이벤트 (좌표 보정 + 서버 전송)
-  // ────────────────────────────────────────────────────────────────
-  canvas.addEventListener('click', (e) => {
-    const nick = nicknameInput.value.trim();
-    if (!nick || nick.length < 3 || nick.length > 12) {
-      alert('닉네임을 3~12자로 입력해주세요.');
-      return;
+    // Single pixel updates
+    socket.on('pixelUpdated', ({ x, y, color, nickname }) => {
+        const coordKey = `${x},${y}`;
+        if (color.toUpperCase() === '#FFFFFF') {
+            delete clientCanvasState[coordKey];
+        } else {
+            clientCanvasState[coordKey] = color;
+        }
+
+        // Redraw only this cell
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.translate(viewOffset.x, viewOffset.y);
+        ctx.scale(currentZoom, currentZoom);
+
+        // Clear & draw
+        ctx.fillStyle = color.toUpperCase() === '#FFFFFF' ? '#000000' : color;
+        ctx.fillRect(
+            x * PIXEL_SIZE,
+            y * PIXEL_SIZE,
+            GRID_INTERVAL * PIXEL_SIZE,
+            GRID_INTERVAL * PIXEL_SIZE
+        );
+
+        // Redraw grid cell if needed
+        if (x % GRID_INTERVAL === 0 || y % GRID_INTERVAL === 0) {
+            ctx.strokeStyle = GRID_LINE_COLOR;
+            ctx.lineWidth = Math.max(0.3, 1 / currentZoom);
+            ctx.strokeRect(
+                x * PIXEL_SIZE,
+                y * PIXEL_SIZE,
+                PIXEL_SIZE,
+                PIXEL_SIZE
+            );
+        }
+
+        ctx.restore();
+
+        // Update activity feed
+        const li = document.createElement('li');
+        const chip = document.createElement('span');
+        chip.className = 'pixel-color-chip';
+        chip.style.backgroundColor = color;
+        li.appendChild(chip);
+
+        const nickSpan = document.createElement('span');
+        nickSpan.className = 'nickname';
+        nickSpan.textContent = nickname || 'Someone';
+
+        const actionSpan = document.createElement('span');
+        actionSpan.className = 'action-placed';
+        actionSpan.textContent = ` placed at (${x},${y})`;
+
+        li.appendChild(nickSpan);
+        li.append(' ');
+        li.appendChild(actionSpan);
+
+        feedListUl.prepend(li);
+        if (feedListUl.children.length > MAX_FEED_ITEMS) {
+            feedListUl.removeChild(feedListUl.lastChild);
+        }
+    });
+
+    // Other socket events
+    socket.on('userCount', count => {
+        userCountSpan.textContent = count;
+    });
+
+    socket.on('cooldown', timeLeft => {
+        actionErrorP.textContent = '';
+        if (timeLeft > 0) {
+            cooldownTimerP.textContent = `Cooldown: ${timeLeft}s`;
+            let interval = setInterval(() => {
+                timeLeft--;
+                if (timeLeft > 0) {
+                    cooldownTimerP.textContent = `Cooldown: ${timeLeft}s`;
+                } else {
+                    cooldownTimerP.textContent = 'Cooldown: Ready';
+                    clearInterval(interval);
+                }
+            }, 1000);
+        } else {
+            cooldownTimerP.textContent = 'Cooldown: Ready';
+        }
+    });
+
+    socket.on('actionError', message => {
+        actionErrorP.textContent = message;
+        setTimeout(() => actionErrorP.textContent = '', 3000);
+    });
+
+    socket.on('connect_error', err => {
+        console.error('Connection Error:', err.message);
+        joinErrorP.textContent = `Connection failed: ${err.message}. Server might be down.`;
+        appContainer.style.display = 'none';
+        nicknameModal.style.display = 'flex';
+    });
+
+    socket.on('disconnect', reason => {
+        console.log('Disconnected:', reason);
+        joinErrorP.textContent = `Disconnected: ${reason}. Attempting to reconnect...`;
+        appContainer.style.display = 'none';
+        nicknameModal.style.display = 'flex';
+    });
+
+    // --- Drawing Helpers ---
+    function drawPixelOnCanvas(x, y, color) {
+        ctx.fillStyle = color;
+        ctx.fillRect(
+            x * PIXEL_SIZE,
+            y * PIXEL_SIZE,
+            GRID_INTERVAL * PIXEL_SIZE,
+            GRID_INTERVAL * PIXEL_SIZE
+        );
     }
 
-    // 로컬 쿨다운 체크
-    if (!canClick()) {
-      return;
+    function drawGrid() {
+        ctx.beginPath();
+        ctx.strokeStyle = GRID_LINE_COLOR;
+        ctx.lineWidth = Math.max(0.1, 0.5 / currentZoom) * PIXEL_SIZE;
+
+        for (let x = 0; x <= CANVAS_WIDTH; x += GRID_INTERVAL) {
+            ctx.moveTo(x * PIXEL_SIZE, 0);
+            ctx.lineTo(x * PIXEL_SIZE, CANVAS_HEIGHT * PIXEL_SIZE);
+        }
+        for (let y = 0; y <= CANVAS_HEIGHT; y += GRID_INTERVAL) {
+            ctx.moveTo(0, y * PIXEL_SIZE);
+            ctx.lineTo(CANVAS_WIDTH * PIXEL_SIZE, y * PIXEL_SIZE);
+        }
+        ctx.stroke();
     }
 
-    // 클릭 시각 기록 및 쿨다운 시작
-    lastClickTime = Date.now();
-    startLocalCooldown();
-    localStorage.setItem('mplace_nickname', nick);
+    function redrawFullCanvas() {
+        canvas.width = CANVAS_WIDTH * PIXEL_SIZE * currentZoom;
+        canvas.height = CANVAS_HEIGHT * PIXEL_SIZE * currentZoom;
+        ctx.imageSmoothingEnabled = false;
 
-    // 화면에 보이는 캔버스 크기
-    const rect = canvas.getBoundingClientRect();
-    const displayWidth  = rect.width;
-    const displayHeight = rect.height;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.translate(viewOffset.x, viewOffset.y);
+        ctx.scale(currentZoom, currentZoom);
 
-    // 클릭한 화면 좌표 (캔버스 내부 상대 위치)
-    const clickX = e.clientX - rect.left;
-    const clickY = e.clientY - rect.top;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, CANVAS_WIDTH * PIXEL_SIZE, CANVAS_HEIGHT * PIXEL_SIZE);
 
-    // 화면 크기 → 내부 1000×1000 좌표 비율
-    const scaleX = INTERNAL_SIZE / displayWidth;
-    const scaleY = INTERNAL_SIZE / displayHeight;
-
-    // 내부 캔버스 좌표 (0 ~ 1000)
-    const internalX = clickX * scaleX;
-    const internalY = clickY * scaleY;
-
-    // 셀 단위 인덱스 (0 ~ 99)
-    const gridX = Math.floor(internalX / 10);
-    const gridY = Math.floor(internalY / 10);
-
-    if (gridX < 0 || gridX > 99 || gridY < 0 || gridY > 99) {
-      return;
+        for (const coord in clientCanvasState) {
+            const [x, y] = coord.split(',').map(Number);
+            drawPixelOnCanvas(x, y, clientCanvasState[coord]);
+        }
+        drawGrid();
     }
 
-    const color = colorPicker.value;
-    socket.emit('pixel_click', { x: gridX, y: gridY, color });
-  });
+    // --- Interaction ---
+    // Disable default context menu
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-  // ────────────────────────────────────────────────────────────────
-  // 7) Socket.IO 이벤트 수신
-  // ────────────────────────────────────────────────────────────────
-  socket.on('pixel_update', ({ x, y, color }) => {
-    drawPixel(x, y, color);
-  });
+    // Click to place pixel (accounts for pan & zoom)
+    canvas.addEventListener('click', event => {
+        if (!currentNickname || isPanning) return;
 
-  socket.on('error_message', (msg) => {
-    console.warn('서버:', msg);
-  });
+        const rect = canvas.getBoundingClientRect();
+        const elementX = event.clientX - rect.left;
+        const elementY = event.clientY - rect.top;
 
-  // 온라인 접속자 수 표시 (서버에서 해당 이벤트를 브로드캐스트해야 함)
-  socket.on('online_count', (count) => {
-    onlineCountSpan.textContent = count;
-  });
+        const logicalX = (elementX - viewOffset.x) / currentZoom;
+        const logicalY = (elementY - viewOffset.y) / currentZoom;
 
-  // ────────────────────────────────────────────────────────────────
-  // 8) 줌(In/Out/Reset) 버튼 기능 구현
-  // ────────────────────────────────────────────────────────────────
-  function applyZoom() {
-    // transform-origin: top left 기준으로 확대/축소
-    canvas.style.transform = `scale(${zoomLevel})`;
-  }
+        const cellSize = PIXEL_SIZE * GRID_INTERVAL;
+        const gridX = Math.floor(logicalX / cellSize) * GRID_INTERVAL;
+        const gridY = Math.floor(logicalY / cellSize) * GRID_INTERVAL;
 
-  zoomInBtn.addEventListener('click', () => {
-    zoomLevel = Math.min(ZOOM_MAX, zoomLevel + ZOOM_STEP);
-    applyZoom();
-  });
+        if (
+            gridX >= 0 && gridX < CANVAS_WIDTH &&
+            gridY >= 0 && gridY < CANVAS_HEIGHT
+        ) {
+            socket.emit('placePixel', { x: gridX, y: gridY, color: selectedColor });
+            actionErrorP.textContent = '';
+        }
+    });
 
-  zoomOutBtn.addEventListener('click', () => {
-    zoomLevel = Math.max(ZOOM_MIN, zoomLevel - ZOOM_STEP);
-    applyZoom();
-  });
+    // Pan via right-click, middle-click, or Ctrl+left-click
+    canvas.addEventListener('mousedown', event => {
+        if (
+            event.button === 2 ||
+            event.button === 1 ||
+            (event.ctrlKey && event.button === 0)
+        ) {
+            isPanning = true;
+            lastPanPosition = { x: event.clientX, y: event.clientY };
+            canvas.style.cursor = 'grabbing';
+            event.preventDefault();
+        }
+    });
 
-  zoomResetBtn.addEventListener('click', () => {
-    zoomLevel = 1.0;
-    applyZoom();
-  });
+    canvas.addEventListener('mousemove', event => {
+        if (!isPanning) return;
+        const dx = event.clientX - lastPanPosition.x;
+        const dy = event.clientY - lastPanPosition.y;
+        lastPanPosition = { x: event.clientX, y: event.clientY };
 
-  // ────────────────────────────────────────────────────────────────
-  // 9) 터치 디바이스 감지 및 기타 초기화
-  // ────────────────────────────────────────────────────────────────
-  if ('ontouchstart' in window) {
-    document.body.classList.add('touch-device');
-  }
+        viewOffset.x += dx;
+        viewOffset.y += dy;
+        redrawFullCanvas();
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (isPanning) {
+            isPanning = false;
+            canvas.style.cursor = 'crosshair';
+        }
+    });
+
+    // --- Zoom Controls ---
+    function doZoom(factor, centerX, centerY) {
+        const prevZoom = currentZoom;
+        currentZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, currentZoom * factor));
+        if (prevZoom === currentZoom) return;
+
+        viewOffset.x = centerX - (centerX - viewOffset.x) * (currentZoom / prevZoom);
+        viewOffset.y = centerY - (centerY - viewOffset.y) * (currentZoom / prevZoom);
+        redrawFullCanvas();
+    }
+
+    zoomInButton.addEventListener('click', () => doZoom(ZOOM_STEP, canvas.width / 2, canvas.height / 2));
+    zoomOutButton.addEventListener('click', () => doZoom(1 / ZOOM_STEP, canvas.width / 2, canvas.height / 2));
+    zoomResetButton.addEventListener('click', () => {
+        currentZoom = 1;
+        viewOffset = { x: 0, y: 0 };
+        redrawFullCanvas();
+    });
+
+    canvas.addEventListener('wheel', event => {
+        event.preventDefault();
+        const delta = event.deltaY > 0 ? 1 / ZOOM_STEP : ZOOM_STEP;
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = event.clientX - rect.left;
+        const mouseY = event.clientY - rect.top;
+        doZoom(delta, mouseX, mouseY);
+    }, { passive: false });
+
+    // --- Color Palette Logic ---
+    function updateSelectedButton(newSelectedButton) {
+        const currentSelected = colorPaletteDiv.querySelector('.selected');
+        if (currentSelected) currentSelected.classList.remove('selected');
+        if (newSelectedButton) newSelectedButton.classList.add('selected');
+    }
+
+    colorPaletteDiv.addEventListener('click', event => {
+        if (event.target.classList.contains('color-button')) {
+            selectedColor = event.target.dataset.color;
+            updateSelectedButton(event.target);
+        }
+    });
+
+    selectCustomColorButton.addEventListener('click', () => {
+        selectedColor = customColorPicker.value;
+        updateSelectedButton(null);
+    });
+
+    const firstColorButton = colorPaletteDiv.querySelector('.color-button');
+    if (firstColorButton) {
+        selectedColor = firstColorButton.dataset.color;
+        firstColorButton.classList.add('selected');
+    } else {
+        customColorPicker.value = selectedColor;
+    }
 });
